@@ -343,25 +343,25 @@ console.log(
  * Webex does NOT automatically instantiate custom elements.
  * We must manually create and attach it to DOM.
  */
-window.addEventListener('DOMContentLoaded', () => {
-  console.log(
-    '[AgentConnect Bridge] DOM fully loaded'
-  );
+// window.addEventListener('DOMContentLoaded', () => {
+//   console.log(
+//     '[AgentConnect Bridge] DOM fully loaded'
+//   );
 
-  // Prevent duplicate widget creation
-  if (!document.querySelector('agentconnect-bridge')) {
-    const widget = document.createElement(
-      'agentconnect-bridge'
-    );
+//   // Prevent duplicate widget creation
+//   if (!document.querySelector('agentconnect-bridge')) {
+//     const widget = document.createElement(
+//       'agentconnect-bridge'
+//     );
 
-    document.body.appendChild(widget);
+//     document.body.appendChild(widget);
 
-    console.log(
-      '[AgentConnect Bridge] Widget instance appended to document.body'
-    );
-  } else {
-    console.log(
-      '[AgentConnect Bridge] Widget already exists'
-    );
-  }
-});
+//     console.log(
+//       '[AgentConnect Bridge] Widget instance appended to document.body'
+//     );
+//   } else {
+//     console.log(
+//       '[AgentConnect Bridge] Widget already exists'
+//     );
+//   }
+// });
