@@ -11,7 +11,7 @@
   /**
    * Wait for WxCC SDK
    */
-  function waitForWxCC(timeout = 15000) {
+  function waitForWxCC(timeout = 60000) {
     return new Promise((resolve, reject) => {
       const start = Date.now();
 
