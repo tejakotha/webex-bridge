@@ -1,147 +1,367 @@
 /**
- * AgentConnect Webex Bridge - WxCC Headless Safe Version
- * NO Custom Elements, NO DOM dependency
+ * AgentConnect Webex Bridge - Headless Widget
+ * Cisco Webex Contact Center Desktop Custom Widget
  */
 
-(function () {
-  console.log("[AgentConnect Bridge] script loaded");
+class AgentConnectBridge extends HTMLElement {
+  constructor() {
+    super();
 
-  let initialized = false;
+    this.eventsSent = 0;
+    this.sdkInitialized = false;
 
-  /**
-   * Wait for WxCC SDK
-   */
-  function waitForWxCC(timeout = 60000) {
-    return new Promise((resolve, reject) => {
-      const start = Date.now();
-
-      const check = () => {
-        if (window.WxCC?.Desktop) {
-          return resolve(window.WxCC.Desktop);
-        }
-
-        if (Date.now() - start > timeout) {
-          return reject(new Error("WxCC SDK timeout"));
-        }
-
-        setTimeout(check, 250);
-      };
-
-      check();
-    });
+    console.log('[AgentConnect Bridge] Component created');
   }
 
   /**
-   * Main init
+   * Called when widget is attached to DOM
    */
-  async function init() {
-    if (initialized) return;
-    initialized = true;
+  connectedCallback() {
+    console.log('[AgentConnect Bridge] connectedCallback triggered');
 
-    console.log("[AgentConnect Bridge] initializing...");
-
-    try {
-      const Desktop = await waitForWxCC();
-
-      await Desktop.config.init({
-        widgetName: "AgentConnect Integration Bridge",
-        widgetProvider: "AgentConnect",
-      });
-
-      console.log("[AgentConnect Bridge] WxCC initialized");
-
-      subscribeToEvents(Desktop);
-    } catch (err) {
-      console.error("[AgentConnect Bridge] init failed:", err);
+    // Prevent duplicate initialization
+    if (this.sdkInitialized) {
+      return;
     }
+
+    this.initializeWebexSDK();
   }
 
   /**
-   * Event subscriptions
+   * Initialize Webex SDK
    */
-  function subscribeToEvents(Desktop) {
-    console.log("[AgentConnect Bridge] subscribing to events");
+  async initializeWebexSDK(retries = 30) {
+    console.log('[AgentConnect Bridge] Checking for WxCC SDK...');
 
-    // Agent state changes
-    Desktop.agentStateInfo.addEventListener("updated", (updates) => {
-      const statusUpdate = updates.find(
-        (u) => u.name === "subStatus" || u.name === "status",
+    // Wait for SDK injection
+    if (
+      typeof window.WxCC === 'undefined' ||
+      !window.WxCC.Desktop
+    ) {
+      if (retries > 0) {
+        console.log(
+          `[AgentConnect Bridge] WxCC SDK not ready. Retrying... (${retries})`
+        );
+
+        setTimeout(() => {
+          this.initializeWebexSDK(retries - 1);
+        }, 1000);
+
+        return;
+      }
+
+      console.error(
+        '[AgentConnect Bridge] Webex SDK not found after retries!'
       );
 
-      if (!statusUpdate) return;
+      return;
+    }
 
-      const isOnline =
-        statusUpdate.value === "Available" || statusUpdate.value === "LoggedIn";
-
-      postToParent("agent:status", {
-        status: isOnline ? "online" : "offline",
-      });
-    });
-
-    // Incoming call (IMPORTANT)
-    Desktop.agentContact.addEventListener("eAgentOfferContact", (event) => {
-      const interaction = event?.data?.interaction;
-      if (!interaction) return;
-
-      postToParent("task:alerting", {
-        taskId: interaction.interactionId,
-        direction: interaction.contactDirection?.type || "INBOUND",
-        ani: interaction.callAssociatedDetails?.ani,
-        dnis: interaction.callAssociatedDetails?.dn,
-        callerName: interaction.participants?.[interaction.owner]?.name,
-        state: "alerting",
-      });
-    });
-
-    // Call accepted
-    Desktop.agentContact.addEventListener("eAgentContactAssigned", (event) => {
-      const interaction = event?.data?.interaction;
-      if (!interaction) return;
-
-      postToParent("task:connected", {
-        taskId: interaction.interactionId,
-        state: "connected",
-      });
-    });
-
-    // Call ended
-    Desktop.agentContact.addEventListener("eAgentContactEnded", (event) => {
-      const interaction = event?.data?.interaction;
-      if (!interaction) return;
-
-      postToParent("task:end", {
-        taskId: interaction.interactionId,
-        state: "ended",
-      });
-    });
-
-    console.log("[AgentConnect Bridge] event listeners ready");
-  }
-
-  /**
-   * Send to parent window (AgentConnect CRM)
-   */
-  function postToParent(type, data) {
-    const message = {
-      source: "webex-bridge",
-      type,
-      data,
-    };
+    console.log('[AgentConnect Bridge] WxCC SDK detected');
 
     try {
-      window.parent?.postMessage(message, "*");
-      window.top?.postMessage(message, "*");
-    } catch (e) {
-      console.error("[AgentConnect Bridge] postMessage failed", e);
+      // Initialize SDK
+      await window.WxCC.Desktop.config.init({
+        widgetName: 'AgentConnect Integration Bridge',
+        widgetProvider: 'AgentConnect'
+      });
+
+      console.log('[AgentConnect Bridge] SDK initialized successfully');
+
+      this.sdkInitialized = true;
+
+      // Register listeners
+      this.subscribeToEvents();
+
+      // Notify parent bridge ready
+      this.sendToAgentConnect('bridge:ready', {
+        initialized: true
+      });
+
+    } catch (error) {
+      console.error(
+        '[AgentConnect Bridge] Failed to initialize SDK:',
+        error
+      );
     }
   }
 
   /**
-   * WxCC entry points (VERY IMPORTANT)
+   * Register all Webex event listeners
    */
-  window.addEventListener("load", init);
-  document.addEventListener("DOMContentLoaded", init);
+  subscribeToEvents() {
+    console.log('[AgentConnect Bridge] Registering event listeners...');
 
-  // fallback in case WxCC loads late
-  setTimeout(init, 2000);
-})();
+    /**
+     * Agent State Updates
+     */
+    try {
+      window.WxCC.Desktop.agentStateInfo.addEventListener(
+        'updated',
+        (updates) => {
+          console.log(
+            '[AgentConnect Bridge] Agent state updated:',
+            updates
+          );
+
+          const statusUpdate = updates.find(
+            (u) =>
+              u.name === 'subStatus' ||
+              u.name === 'status'
+          );
+
+          if (statusUpdate) {
+            const isOnline =
+              statusUpdate.value === 'Available' ||
+              statusUpdate.value === 'LoggedIn';
+
+            this.sendToAgentConnect('agent:status', {
+              status: isOnline ? 'online' : 'offline',
+              rawStatus: statusUpdate.value
+            });
+          }
+        }
+      );
+    } catch (err) {
+      console.error(
+        '[AgentConnect Bridge] Failed registering agentStateInfo listener',
+        err
+      );
+    }
+
+    /**
+     * Contact Offered
+     */
+    try {
+      window.WxCC.Desktop.agentContact.addEventListener(
+        'eAgentOfferContact',
+        (event) => {
+          console.log(
+            '[AgentConnect Bridge] Contact offered:',
+            event
+          );
+
+          this.handleInteractionEvent(
+            'task:alerting',
+            event,
+            'alerting'
+          );
+        }
+      );
+    } catch (err) {
+      console.error(
+        '[AgentConnect Bridge] Failed registering offer listener',
+        err
+      );
+    }
+
+    /**
+     * Contact Assigned
+     */
+    try {
+      window.WxCC.Desktop.agentContact.addEventListener(
+        'eAgentContactAssigned',
+        (event) => {
+          console.log(
+            '[AgentConnect Bridge] Contact assigned:',
+            event
+          );
+
+          this.handleInteractionEvent(
+            'task:connected',
+            event,
+            'connected'
+          );
+        }
+      );
+    } catch (err) {
+      console.error(
+        '[AgentConnect Bridge] Failed registering assigned listener',
+        err
+      );
+    }
+
+    /**
+     * Contact Ended
+     */
+    try {
+      window.WxCC.Desktop.agentContact.addEventListener(
+        'eAgentContactEnded',
+        (event) => {
+          console.log(
+            '[AgentConnect Bridge] Contact ended:',
+            event
+          );
+
+          this.handleInteractionEvent(
+            'task:end',
+            event,
+            'ended'
+          );
+        }
+      );
+    } catch (err) {
+      console.error(
+        '[AgentConnect Bridge] Failed registering ended listener',
+        err
+      );
+    }
+
+    /**
+     * Contact Wrapped Up
+     */
+    try {
+      window.WxCC.Desktop.agentContact.addEventListener(
+        'eAgentContactWrappedUp',
+        (event) => {
+          console.log(
+            '[AgentConnect Bridge] Contact wrapped up:',
+            event
+          );
+
+          this.handleInteractionEvent(
+            'task:end',
+            event,
+            'wrapped_up'
+          );
+        }
+      );
+    } catch (err) {
+      console.error(
+        '[AgentConnect Bridge] Failed registering wrapup listener',
+        err
+      );
+    }
+
+    console.log(
+      '[AgentConnect Bridge] All listeners registered successfully'
+    );
+  }
+
+  /**
+   * Common interaction event handler
+   */
+  handleInteractionEvent(type, event, state) {
+    try {
+      const interaction = event?.data?.interaction;
+
+      if (!interaction) {
+        console.warn(
+          '[AgentConnect Bridge] No interaction data found'
+        );
+        return;
+      }
+
+      const payload = {
+        taskId: interaction.interactionId,
+        direction:
+          interaction.contactDirection?.type || 'INBOUND',
+        ani: interaction.callAssociatedDetails?.ani,
+        dnis: interaction.callAssociatedDetails?.dn,
+        callerName:
+          interaction.participants?.[
+            interaction.owner
+          ]?.name,
+        state
+      };
+
+      this.sendToAgentConnect(type, payload);
+
+    } catch (error) {
+      console.error(
+        '[AgentConnect Bridge] Failed processing interaction',
+        error
+      );
+    }
+  }
+
+  /**
+   * Send messages to parent iframe/window
+   */
+  sendToAgentConnect(type, data) {
+    const message = {
+      source: 'webex-bridge',
+      timestamp: new Date().toISOString(),
+      type,
+      data
+    };
+
+    console.log(
+      '[AgentConnect Bridge] Sending message:',
+      message
+    );
+
+    try {
+      // Send to top window
+      if (window.top && window.top !== window) {
+        window.top.postMessage(message, '*');
+      }
+
+      // Send to immediate parent
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(message, '*');
+      }
+
+      this.eventsSent++;
+
+      console.log(
+        `[AgentConnect Bridge] Event sent successfully (${this.eventsSent})`
+      );
+
+    } catch (error) {
+      console.error(
+        '[AgentConnect Bridge] Failed sending message:',
+        error
+      );
+    }
+  }
+
+  /**
+   * Cleanup
+   */
+  disconnectedCallback() {
+    console.log(
+      '[AgentConnect Bridge] Component disconnected'
+    );
+  }
+}
+
+/**
+ * Register custom element
+ */
+customElements.define(
+  'agentconnect-bridge',
+  AgentConnectBridge
+);
+
+console.log(
+  '[AgentConnect Bridge] Custom element registered'
+);
+
+/**
+ * IMPORTANT:
+ * Webex does NOT automatically instantiate custom elements.
+ * We must manually create and attach it to DOM.
+ */
+window.addEventListener('DOMContentLoaded', () => {
+  console.log(
+    '[AgentConnect Bridge] DOM fully loaded'
+  );
+
+  // Prevent duplicate widget creation
+  if (!document.querySelector('agentconnect-bridge')) {
+    const widget = document.createElement(
+      'agentconnect-bridge'
+    );
+
+    document.body.appendChild(widget);
+
+    console.log(
+      '[AgentConnect Bridge] Widget instance appended to document.body'
+    );
+  } else {
+    console.log(
+      '[AgentConnect Bridge] Widget already exists'
+    );
+  }
+});
